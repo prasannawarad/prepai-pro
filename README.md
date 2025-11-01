@@ -5,6 +5,8 @@
 ![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
+🔗 **[Live Demo → prepai-pro.netlify.app](https://prepai-pro.netlify.app)**
+
 **PrepAI Pro** is a high-performance, single-component React application designed to bridge the gap between company research and interview performance. Powered by the **Gemini 2.0 Flash API**, it provides candidates with deep company insights and a high-stakes mock interview environment.
 
 ---
