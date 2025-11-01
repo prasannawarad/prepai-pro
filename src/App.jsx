@@ -33,16 +33,18 @@ function parseMarkdown(text) {
 }
 
 // ─── Gemini API helper ───
-async function callGemini(apiKey, prompt, temperature = 0.7) {
+async function callGemini(apiKey, prompt, temperature = 0.7, tools = null) {
+  const requestBody = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { temperature, maxOutputTokens: 4096 },
+  };
+  if (tools) requestBody.tools = tools;
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature, maxOutputTokens: 4096 },
-      }),
+      body: JSON.stringify(requestBody),
     }
   );
   const data = await response.json();
@@ -56,17 +58,17 @@ async function callGemini(apiKey, prompt, temperature = 0.7) {
   return rawText;
 }
 
-async function callGeminiJSON(apiKey, prompt, temperature = 0.7) {
-  const raw = await callGemini(apiKey, prompt, temperature);
+async function callGeminiJSON(apiKey, prompt, temperature = 0.7, tools = null) {
+  const raw = await callGemini(apiKey, prompt, temperature, tools);
   const cleaned = raw.replace(/```json|```/g, "").trim();
   return JSON.parse(cleaned);
 }
 
 // ─── Main Component ───
 export default function PrepAIPro() {
-  const [apiKey, setApiKey] = useState("");
-  const [showKeyInput, setShowKeyInput] = useState(true);
-  const [keySaved, setKeySaved] = useState(false);
+  const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+
+  const [apiKey, setApiKey] = useState(API_KEY);
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
   const [resume, setResume] = useState("");
@@ -96,8 +98,8 @@ export default function PrepAIPro() {
   const mockInputRef = useRef(null);
 
   useEffect(() => {
-    if (keySaved) inputRef.current?.focus();
-  }, [keySaved]);
+    inputRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -107,18 +109,11 @@ export default function PrepAIPro() {
     if (mockStarted && !mockLoading) mockInputRef.current?.focus();
   }, [mockStarted, mockLoading]);
 
-  const saveKey = () => {
-    if (apiKey.trim()) {
-      setKeySaved(true);
-      setShowKeyInput(false);
-      setError("");
-    }
-  };
+
 
   // ─── Research Mode ───
   const fetchResearch = async () => {
-    if (!company.trim() || !apiKey.trim()) {
-      if (!apiKey.trim()) { setShowKeyInput(true); setError("Add your Gemini API key first."); }
+    if (!company.trim()) {
       return;
     }
     setResearchLoading(true);
@@ -142,15 +137,15 @@ Respond ONLY in valid JSON (no markdown fences). Keys:
   "industry": "Primary industry",
   "history": "3-4 paragraph markdown history: founding, milestones, growth, market position.",
   "culture": "3-4 paragraph markdown culture: values, management style, work-life balance, DEI, perks, what it's really like.",
-  "news": "Markdown with 5-6 recent notable developments using - bullets.",
+  "news": "Markdown-formatted section with 5-6 MOST RECENT news and developments from the last 30 days. Include specific dates. Use bullet points starting with -. Focus on the very latest news, earnings, product launches, leadership changes, partnerships, and market movements.",
   "interview_tips": "Markdown with 7-8 specific actionable tips for this company.${role.trim() ? ` Tailored to ${role.trim()}.` : ""}",
   "star_stories": "${resume.trim()
-      ? "Markdown with 4-5 personalized STAR (Situation, Task, Action, Result) stories derived from the candidate's resume experiences. Each story should be mapped to a company value or common interview theme. Format each with a bold title, the company value it maps to, and the full STAR narrative."
-      : "Markdown explaining: Paste your resume in the Resume field and re-search to get personalized STAR stories mapped to this company's values."}"
+        ? "Markdown with 4-5 personalized STAR (Situation, Task, Action, Result) stories derived from the candidate's resume experiences. Each story should be mapped to a company value or common interview theme. Format each with a bold title, the company value it maps to, and the full STAR narrative."
+        : "Markdown explaining: Paste your resume in the Resume field and re-search to get personalized STAR stories mapped to this company's values."}"
 }`;
 
     try {
-      const parsed = await callGeminiJSON(apiKey, prompt);
+      const parsed = await callGeminiJSON(apiKey, prompt, 0.7, [{ google_search: {} }]);
       setResearchData(parsed);
     } catch (err) {
       console.error(err);
@@ -162,9 +157,8 @@ Respond ONLY in valid JSON (no markdown fences). Keys:
 
   // ─── Mock Interview Mode ───
   const startMockInterview = async () => {
-    if (!company.trim() || !apiKey.trim()) {
-      if (!apiKey.trim()) { setShowKeyInput(true); setError("Add your Gemini API key first."); }
-      if (!company.trim()) { setError("Enter a company name to start."); }
+    if (!company.trim()) {
+      setError("Enter a company name to start.");
       return;
     }
     setMockStarted(true);
@@ -287,8 +281,8 @@ Keep it natural. Respond only with your interviewer dialogue.`;
           height: "100%",
           borderRadius: 3,
           background: score >= 7 ? "linear-gradient(90deg, #4ADE80, #22C55E)" :
-                     score >= 5 ? "linear-gradient(90deg, #FBBF24, #F59E0B)" :
-                     "linear-gradient(90deg, #F87171, #EF4444)",
+            score >= 5 ? "linear-gradient(90deg, #FBBF24, #F59E0B)" :
+              "linear-gradient(90deg, #F87171, #EF4444)",
           transition: "width 0.8s ease",
         }} />
       </div>
@@ -341,38 +335,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
         </div>
 
         {/* ─── API Key ─── */}
-        {showKeyInput && (
-          <div style={S.keyCard}>
-            <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 14 }}>
-              <span style={{ fontSize: 18 }}>🔑</span>
-              <div>
-                <h3 style={{ fontSize: 15, fontWeight: 700, color: "var(--text-bright)", marginBottom: 3 }}>
-                  Free API Setup
-                </h3>
-                <p style={{ fontSize: 13, color: "#7B8BA8", lineHeight: 1.5 }}>
-                  Get your free key from{" "}
-                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer"
-                    style={{ color: "var(--accent)", textDecoration: "underline" }}>
-                    Google AI Studio
-                  </a> — 30 seconds, no credit card.
-                </p>
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 10 }}>
-              <input type="password" placeholder="Paste Gemini API key..."
-                value={apiKey} onChange={e => setApiKey(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && saveKey()}
-                style={{ ...S.input, flex: 1 }} />
-              <button onClick={saveKey} disabled={!apiKey.trim()}
-                style={{ ...S.btnPrimary, opacity: !apiKey.trim() ? 0.4 : 1 }}>
-                Save
-              </button>
-            </div>
-            <p style={{ fontSize: 11, color: "#4B5A6F", marginTop: 8 }}>
-              🔒 Key stays in your browser — never stored server-side.
-            </p>
-          </div>
-        )}
+
 
         {/* ─── Mode Selector ─── */}
         <div style={S.modeRow}>
@@ -462,9 +425,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                 </button>
               </>
             )}
-            {keySaved && !showKeyInput && (
-              <button onClick={() => setShowKeyInput(true)} style={S.linkBtn}>Change Key</button>
-            )}
+
           </div>
         </div>
 
@@ -482,9 +443,11 @@ Keep it natural. Respond only with your interviewer dialogue.`;
             {researchLoading && (
               <div style={S.loadingBox}>
                 <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-                  {[0,1,2].map(i => (
-                    <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent)",
-                      animation: `pulse 1.2s ease ${i * 0.2}s infinite` }} />
+                  {[0, 1, 2].map(i => (
+                    <div key={i} style={{
+                      width: 8, height: 8, borderRadius: "50%", background: "var(--accent)",
+                      animation: `pulse 1.2s ease ${i * 0.2}s infinite`
+                    }} />
                   ))}
                 </div>
                 <p style={{ fontSize: 14, color: "#7B8BA8" }}>Researching {company}...</p>
@@ -588,9 +551,11 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                       animation: `slideIn 0.3s ease ${i * 0.05}s both`,
                       maxWidth: "85%",
                     }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4,
+                      <div style={{
+                        fontSize: 11, fontWeight: 700, marginBottom: 4,
                         color: msg.role === "candidate" ? "var(--accent)" : "var(--accent2)",
-                        textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        textTransform: "uppercase", letterSpacing: "0.05em"
+                      }}>
                         {msg.role === "candidate" ? "You" : "Interviewer"}
                       </div>
                       <div style={{ fontSize: 14, lineHeight: 1.65, color: "var(--text-bright)" }}>
@@ -602,7 +567,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                   {mockLoading && (
                     <div style={{ ...S.chatBubble, alignSelf: "flex-start", background: "var(--surface2)", borderColor: "var(--border)" }}>
                       <div style={{ display: "flex", gap: 4, padding: "4px 0" }}>
-                        {[0,1,2].map(i => (
+                        {[0, 1, 2].map(i => (
                           <div key={i} style={{
                             width: 6, height: 6, borderRadius: "50%", background: "var(--accent2)",
                             animation: `typing 1s ease ${i * 0.15}s infinite`
@@ -658,8 +623,10 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                       ✓ Strengths
                     </h3>
                     {mockScorecard.strengths?.map((s, i) => (
-                      <div key={i} style={{ fontSize: 13, color: "var(--text)", marginBottom: 6, paddingLeft: 12,
-                        borderLeft: "2px solid #4ADE8044", lineHeight: 1.5 }}>
+                      <div key={i} style={{
+                        fontSize: 13, color: "var(--text)", marginBottom: 6, paddingLeft: 12,
+                        borderLeft: "2px solid #4ADE8044", lineHeight: 1.5
+                      }}>
                         {s}
                       </div>
                     ))}
@@ -669,8 +636,10 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                       ↗ Improve
                     </h3>
                     {mockScorecard.improvements?.map((s, i) => (
-                      <div key={i} style={{ fontSize: 13, color: "var(--text)", marginBottom: 6, paddingLeft: 12,
-                        borderLeft: "2px solid #FBBF2444", lineHeight: 1.5 }}>
+                      <div key={i} style={{
+                        fontSize: 13, color: "var(--text)", marginBottom: 6, paddingLeft: 12,
+                        borderLeft: "2px solid #FBBF2444", lineHeight: 1.5
+                      }}>
                         {s}
                       </div>
                     ))}
@@ -683,8 +652,10 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                       Per-Question Breakdown
                     </h3>
                     {mockScorecard.per_question.map((q, i) => (
-                      <div key={i} style={{ marginBottom: 16, paddingBottom: 16,
-                        borderBottom: i < mockScorecard.per_question.length - 1 ? "1px solid var(--border)" : "none" }}>
+                      <div key={i} style={{
+                        marginBottom: 16, paddingBottom: 16,
+                        borderBottom: i < mockScorecard.per_question.length - 1 ? "1px solid var(--border)" : "none"
+                      }}>
                         <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-bright)", marginBottom: 6 }}>
                           Q{i + 1}: {q.question_summary}
                         </div>
@@ -725,7 +696,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
 
         {/* Footer */}
         <div style={S.footer}>
-          <p>Built by <strong>Prasanna Warad</strong> · Powered by <strong>Gemini 2.0 Flash</strong> · Free tier: 15 req/min</p>
+          <p>Built by <strong>Prasanna Warad</strong> · Powered by <strong>Gemini 2.5 Flash</strong></p>
         </div>
       </div>
     </div>
@@ -761,12 +732,6 @@ const S = {
     background: "rgba(74,222,128,0.12)", color: "#4ADE80",
     borderRadius: 4, border: "1px solid rgba(74,222,128,0.25)",
     letterSpacing: "0.1em", fontFamily: "'Space Mono', monospace",
-  },
-
-  keyCard: {
-    background: "var(--surface)", border: "1px solid #E8A83833",
-    borderRadius: 12, padding: "18px 20px", marginBottom: 16,
-    animation: "fadeUp 0.4s ease",
   },
 
   modeRow: { display: "flex", gap: 10, marginBottom: 16 },
