@@ -1,2 +1,0 @@
-# SPA fallback (Vite copies this to dist/). Static files win first on Netlify.
-/*    /index.html   200

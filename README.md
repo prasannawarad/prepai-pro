@@ -5,7 +5,7 @@
 ![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
-🔗 **[Live Demo → prepai-pro.netlify.app](https://prepai-pro.netlify.app)**
+🔗 Deploy on **[Vercel](https://vercel.com)** (see **Deploy** below). Optional custom domain, e.g. **`prep.prasannawarad.com`**, on `prasannawarad.com`.
 
 **PrepAI Pro** is a single-component React application that bridges the gap between **company research** and **interview performance**. Powered by **Gemini 2.5 Flash**, it generates a readable company dossier and runs a scored mock interview loop.
 
@@ -118,21 +118,24 @@ Copy `.env.example` → `.env` and set:
 VITE_GEMINI_API_KEY=your-gemini-api-key-here
 ```
 
-Note: on hosts like Netlify/Vercel, `VITE_` variables are **inlined at build time**. Set the env var in the build environment and redeploy after changes.
+Note: on Vercel, `VITE_` variables are **inlined at build time**. Set **`VITE_GEMINI_API_KEY`** for **Production** (and **Preview** if you want PR previews to work), then redeploy when it changes.
 
-### Deploy to Netlify
+### Deploy on Vercel
 
-**Option A — Netlify UI (no GitHub Actions):** In [Netlify](https://app.netlify.com/), add the site from this GitHub repo. Set **`VITE_GEMINI_API_KEY`** under **Site configuration → Environment variables** (scope: Builds). Pushes to `main` trigger deploys; `netlify.toml` already sets build command and publish directory.
+1. Import this repo in the [Vercel dashboard](https://vercel.com/new) (GitHub integration).  
+2. Vite is auto-detected; **`vercel.json`** pins `npm run build` → **`dist`**.  
+3. **Settings → Environment Variables:** add **`VITE_GEMINI_API_KEY`** (same value as local `.env`).  
+4. Deploy. Every **`git push`** to the linked branch triggers a new build.
 
-**Option B — GitHub Actions (workflow in `.github/workflows/netlify.yml`):** Add these **repository secrets** in GitHub (**Settings → Secrets and variables → Actions**):
+### Custom domain (`prasannawarad.com`)
 
-| Secret | Where to get it |
-|--------|-----------------|
-| `VITE_GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/) |
-| `NETLIFY_AUTH_TOKEN` | Netlify **User settings → Applications → Personal access tokens → New access token** |
-| `NETLIFY_SITE_ID` | Netlify **Site configuration → Site details → Site ID** |
+You can serve the app on your existing domain (recommended: a **subdomain** so the apex can stay a portfolio):
 
-After secrets are saved, each push to `main` runs `npm ci`, `npm run build`, and `netlify deploy --prod --dir=dist`.
+1. Vercel project → **Settings → Domains** → add e.g. **`prep.prasannawarad.com`** (or **`prasannawarad.com`** for the whole site).  
+2. Follow Vercel’s DNS instructions at your registrar (usually a **`CNAME`** for a subdomain pointing to **`cname.vercel-dns.com`**, or Vercel’s records for an apex domain).  
+3. Wait for DNS propagation; Vercel provisions **HTTPS** automatically.
+
+Reference: [Vercel — custom domains](https://vercel.com/docs/concepts/projects/domains).
 
 ---
 

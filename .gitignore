@@ -15,7 +15,6 @@ dist-ssr
 
 # Local tooling
 .claude/
-.netlify
 .vercel
 .eslintcache
 *.tsbuildinfo

@@ -22,6 +22,8 @@ VITE_GEMINI_API_KEY=your-gemini-api-key-here
 
 The key is accessed in code via `import.meta.env.VITE_GEMINI_API_KEY`. Only `VITE_`-prefixed variables are exposed to the browser bundle by Vite.
 
+Deployment targets **Vercel** (`vercel.json`); set `VITE_GEMINI_API_KEY` in the Vercel project environment. Custom domains are configured in the Vercel dashboard (DNS at your registrar).
+
 ## Architecture
 
 This is a **single-file React application**. All logic, UI, and inline styles live in [src/App.jsx](src/App.jsx). There is no routing, no state management library, and no component library.
