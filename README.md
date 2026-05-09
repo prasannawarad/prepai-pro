@@ -120,6 +120,20 @@ VITE_GEMINI_API_KEY=your-gemini-api-key-here
 
 Note: on hosts like Netlify/Vercel, `VITE_` variables are **inlined at build time**. Set the env var in the build environment and redeploy after changes.
 
+### Deploy to Netlify
+
+**Option A — Netlify UI (no GitHub Actions):** In [Netlify](https://app.netlify.com/), add the site from this GitHub repo. Set **`VITE_GEMINI_API_KEY`** under **Site configuration → Environment variables** (scope: Builds). Pushes to `main` trigger deploys; `netlify.toml` already sets build command and publish directory.
+
+**Option B — GitHub Actions (workflow in `.github/workflows/netlify.yml`):** Add these **repository secrets** in GitHub (**Settings → Secrets and variables → Actions**):
+
+| Secret | Where to get it |
+|--------|-----------------|
+| `VITE_GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/) |
+| `NETLIFY_AUTH_TOKEN` | Netlify **User settings → Applications → Personal access tokens → New access token** |
+| `NETLIFY_SITE_ID` | Netlify **Site configuration → Site details → Site ID** |
+
+After secrets are saved, each push to `main` runs `npm ci`, `npm run build`, and `netlify deploy --prod --dir=dist`.
+
 ---
 
 ## 📸 Screenshots
