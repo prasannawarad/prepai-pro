@@ -1,13 +1,13 @@
 # PrepAI Pro — AI Interview Intelligence Platform
 
 ![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
-![Gemini](https://img.shields.io/badge/Gemini_2.0_Flash-4285F4?style=for-the-badge&logo=google&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini_2.5_Flash-4285F4?style=for-the-badge&logo=google&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
 🔗 **[Live Demo → prepai-pro.netlify.app](https://prepai-pro.netlify.app)**
 
-**PrepAI Pro** is a high-performance, single-component React application designed to bridge the gap between company research and interview performance. Powered by the **Gemini 2.0 Flash API**, it provides candidates with deep company insights and a high-stakes mock interview environment.
+**PrepAI Pro** is a single-component React application that bridges the gap between **company research** and **interview performance**. Powered by **Gemini 2.5 Flash**, it generates a readable company dossier and runs a scored mock interview loop.
 
 ---
 
@@ -20,10 +20,9 @@ PrepAI Pro transforms the interview preparation process into a structured, AI-dr
 ## ✨ Key Features
 
 ### 🔍 MODE 1: Company Research
-- **Deep Intel**: Instantly fetch structured history, work culture, and recent news for any company.
-- **Tailored Tips**: Get actionable interview advice specific to the company and your targeted role.
-- **STAR Story Generator**: Paste your resume to have the AI automatically extract your best experiences and map them to the company's core values using the STAR (Situation, Task, Action, Result) method.
-- **Tabbed Interface**: Navigate through *History, Culture, News, Tips,* and *STAR Stories* via a clean, interactive UI.
+- **Dossier tabs**: *History*, *Products & market*, *Culture*, *Latest news*, and an *Interview playbook*.
+- **Role-aware**: Add a role to bias the playbook + question themes toward your target job.
+- **STAR stories**: Paste resume text **or upload a `.txt` / `.md` file** to generate 4–5 STAR stories mapped to interview themes.
 
 ### 🎙️ MODE 2: Mock Interview
 - **Difficulty Scaling**: Choose from *Warm-up* (easy), *Standard* (medium), or *Pressure* (hard) levels.
@@ -44,6 +43,7 @@ PrepAI Pro leverages advanced Prompt Engineering and LLM orchestration patterns:
 | **Structured Output** | Enforcing JSON schemas for UI rendering. | Strict JSON parsing with error recovery for research and scorecards. |
 | **Context Injection** | Augmenting base prompts with user-specific data. | Injecting Resume text into Gemini prompts for personalized STAR stories. |
 | **Temperature Tuning** | Adjusting "creativity" per task. | 0.7 for Research, 0.8 for Interviews (variety), 0.5 for Scoring (precision). |
+| **Search grounding** | Use public web snippets for recency. | Research calls Gemini with Google Search grounding enabled. |
 
 ---
 
@@ -55,7 +55,7 @@ PrepAI Pro leverages advanced Prompt Engineering and LLM orchestration patterns:
       ▼
 [ React UI (App.jsx) ] <───> [ inline CSS System ]
       │
-      ├─► [ Research Engine ] ─────► [ Gemini 2.0 Flash API (JSON) ]
+      ├─► [ Research Engine ] ─────► [ Gemini 2.5 Flash API (JSON) ]
       │                                       │
       ├─► [ Mock Interviewer ] <───[ multi-turn dialogue ]───┘
       │
@@ -66,11 +66,11 @@ PrepAI Pro leverages advanced Prompt Engineering and LLM orchestration patterns:
 
 ## 🛠️ Tech Stack
 
-- **Frontend**: React 18, Vite
-- **AI Core**: Gemini 2.0 Flash API (Free Tier)
-- **Styling**: Vanilla CSS-in-JS (React state-based theme)
-- **Fonts**: [Google Fonts](https://fonts.google.com/) (Space Mono + Manrope)
-- **State Management**: React Hooks (useState, useRef, useEffect, useCallback)
+- **Frontend**: React 19 + Vite
+- **AI Core**: Gemini 2.5 Flash API (browser call)
+- **Styling**: Inline style system in `src/App.jsx` + globals in `src/index.css`
+- **Fonts**: Fraunces (serif) + Geist (sans) + JetBrains Mono (mono)
+- **State**: React hooks (no external state lib)
 
 ---
 
@@ -112,6 +112,14 @@ Run the development server:
 npm run dev
 ```
 
+### Environment variables
+Copy `.env.example` → `.env` and set:
+```bash
+VITE_GEMINI_API_KEY=your-gemini-api-key-here
+```
+
+Note: on hosts like Netlify/Vercel, `VITE_` variables are **inlined at build time**. Set the env var in the build environment and redeploy after changes.
+
 ---
 
 ## 📸 Screenshots
@@ -121,7 +129,7 @@ npm run dev
 
 ## 🗺️ Roadmap
 - [ ] **Video/Audio Support**: Real-time speech-to-text for a hands-free mock interview experience.
-- [ ] **Resume PDF Parsing**: Direct PDF upload instead of pasting text.
+- [ ] **Resume PDF Parsing**: Direct PDF upload (requires client parser or small API).
 - [ ] **LinkedIn Integration**: Real-time news scraping for even fresher company updates.
 - [ ] **Panel Interview Mode**: Multiple AI characters with different personas (e.g., Technical, HR, Manager).
 - [ ] **Report Export**: Option to download the final scorecard as a PDF.
