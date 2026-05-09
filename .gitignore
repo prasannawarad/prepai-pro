@@ -13,6 +13,12 @@ dist
 dist-ssr
 *.local
 
+# Local tooling
+.netlify
+.vercel
+.eslintcache
+*.tsbuildinfo
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
