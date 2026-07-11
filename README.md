@@ -115,16 +115,16 @@ npm run dev
 ### Environment variables
 Copy `.env.example` → `.env` and set:
 ```bash
-VITE_GEMINI_API_KEY=your-gemini-api-key-here
+GEMINI_API_KEY=your-gemini-api-key-here
 ```
 
-Note: on Vercel, `VITE_` variables are **inlined at build time**. Set **`VITE_GEMINI_API_KEY`** for **Production** (and **Preview** if you want PR previews to work), then redeploy when it changes.
+The key is **server-side only**: it is read by the serverless proxy (`api/gemini.js`), never bundled into the browser. Don't add a `VITE_` prefix — Vite would inline it into the public JS and anyone could extract it.
 
 ### Deploy on Vercel
 
 1. Import this repo in the [Vercel dashboard](https://vercel.com/new) (GitHub integration).  
-2. Vite is auto-detected; **`vercel.json`** pins `npm run build` → **`dist`**.  
-3. **Settings → Environment Variables:** add **`VITE_GEMINI_API_KEY`** (same value as local `.env`).  
+2. Vite is auto-detected; **`vercel.json`** pins `npm run build` → **`dist`** and serves **`api/gemini.js`** as a serverless function.  
+3. **Settings → Environment Variables:** add **`GEMINI_API_KEY`** (same value as local `.env`) for **Production** (and **Preview** if you want PR previews to work). Remove any old `VITE_GEMINI_API_KEY`.  
 4. Deploy. Every **`git push`** to the linked branch triggers a new build.
 
 ### Custom domain (`prasannawarad.com`)

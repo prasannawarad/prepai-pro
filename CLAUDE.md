@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## What this is
+
+PrepAI Pro — an AI interview-prep web app with two modes: a company/role research dossier generator (with optional resume-tailored STAR stories) and a multi-turn mock interview with an AI scorecard. Powered by Gemini, deployed on Vercel.
+
 ## Commands
 
 ```bash
@@ -17,12 +21,14 @@ No test framework is configured — there are no test files or test scripts.
 
 Copy `.env.example` to `.env` and set:
 ```
-VITE_GEMINI_API_KEY=your-gemini-api-key-here
+GEMINI_API_KEY=your-gemini-api-key-here
 ```
 
-The key is accessed in code via `import.meta.env.VITE_GEMINI_API_KEY`. Only `VITE_`-prefixed variables are exposed to the browser bundle by Vite.
+The key is **server-side only** — read via `process.env.GEMINI_API_KEY` in [api/gemini.js](api/gemini.js). It must never get a `VITE_` prefix (Vite would inline it into the browser bundle; that leak is exactly what the proxy exists to prevent).
 
-Deployment targets **Vercel** (`vercel.json`); set `VITE_GEMINI_API_KEY` in the Vercel project environment. Custom domains are configured in the Vercel dashboard (DNS at your registrar).
+Optional: `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` enable cross-instance rate limiting on the proxy (see [api/_lib/ratelimit.js](api/_lib/ratelimit.js)); without them a per-instance in-memory limiter is used. `GROQ_API_KEY` in `.env.example` is a placeholder for the planned voice mode — no code reads it yet.
+
+Deployment targets **Vercel** (`vercel.json`, which also sets security headers incl. CSP); set `GEMINI_API_KEY` in the Vercel project environment (delete the old `VITE_GEMINI_API_KEY` if present). Custom domains are configured in the Vercel dashboard (DNS at your registrar). CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs lint + build on pushes and PRs.
 
 ## Architecture
 
@@ -37,14 +43,18 @@ This is a **single-file React application**. All logic, UI, and inline styles li
 
 ### Gemini API integration
 
-Two thin wrappers in [src/App.jsx](src/App.jsx) handle all API calls:
+The browser never talks to Gemini directly. All calls go through **[api/gemini.js](api/gemini.js)**, a Vercel serverless function that holds the API key, pins the model (`gemini-2.5-flash`), caps `maxOutputTokens` at 8192, clamps temperature, rate-limits per IP (10 req/min), and maps upstream errors (429 quota, key rejection, timeout) to friendly messages. Its request contract is `POST /api/gemini` with `{ prompt, temperature, useSearch, responseSchema }`; it responds `{ text }` or `{ error }`.
 
-- `callGemini(prompt, temperature, tools?)` — raw text response
-- `callGeminiJSON(prompt, temperature, tools?)` — strips markdown fences and `JSON.parse`s the result
+Two thin client wrappers in [src/App.jsx](src/App.jsx) call the proxy:
 
-Model: `gemini-2.5-flash` via `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`.
+- `callGemini(prompt, { temperature, useSearch, responseSchema })` — raw text response
+- `callGeminiJSON(prompt, options)` — same options; extracts the outermost `{…}` from the reply and `JSON.parse`s it
 
-Google Search grounding is passed via the `tools` parameter as `[{ google_search: {} }]`.
+`useSearch: true` enables Google Search grounding (server adds `tools: [{ google_search: {} }]`); only the research dossier uses it. `responseSchema` turns on Gemini JSON mode for guaranteed-shape output — the scorecard uses it (`SCORECARD_SCHEMA`), but it **cannot be combined with `useSearch`** (Gemini limitation; the server silently ignores the schema on grounded calls).
+
+In dev, a middleware plugin in [vite.config.js](vite.config.js) serves the same handler at `/api/gemini`, so `npm run dev` works without the Vercel CLI. The plugin and the handler share one code path — change [api/gemini.js](api/gemini.js) and both environments pick it up.
+
+**Rendering gotcha:** dossier markdown is rendered via `dangerouslySetInnerHTML`. `parseMarkdown()` HTML-escapes the LLM text *before* its regex transforms — keep that ordering, it is the XSS defense.
 
 ### Styling
 

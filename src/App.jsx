@@ -1,7 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY ?? "";
-
 const MAX_RESUME_FILE_BYTES = 512 * 1024;
 const MAX_RESUME_CHARS = 80_000;
 
@@ -91,9 +89,21 @@ const MOCK_REPORT_STEPS = [
 ];
 
 // ─── Markdown → editorial HTML ───
+// Escape first: the text comes from an LLM (with search grounding, it can echo
+// arbitrary web content), and the result is rendered via dangerouslySetInnerHTML.
+// After escaping, the only tags in the output are the ones we insert below.
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function parseMarkdown(text) {
   if (!text) return "";
-  return text
+  return escapeHtml(text)
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.*?)\*/g, "<em>$1</em>")
     .replace(/^### (.*$)/gm, '<h4 class="md-h4">$1</h4>')
@@ -103,37 +113,70 @@ function parseMarkdown(text) {
     .replace(/\n/g, "<br/>");
 }
 
-// ─── Gemini API ───
-async function callGemini(prompt, temperature = 0.7, tools = null) {
-  const requestBody = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { temperature, maxOutputTokens: 8192 },
-  };
-  if (tools) requestBody.tools = tools;
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-    {
+// ─── Gemini API (via serverless proxy — the key never reaches the browser) ───
+async function callGemini(prompt, { temperature = 0.7, useSearch = false, responseSchema = null } = {}) {
+  let response;
+  try {
+    response = await fetch("/api/gemini", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
-    }
-  );
-  const data = await response.json();
-  if (data.error) {
-    if (data.error.code === 400 || data.error.code === 403)
-      throw new Error("Invalid API key. Check your Gemini key.");
-    throw new Error(data.error.message || "API error");
+      body: JSON.stringify({ prompt, temperature, useSearch, responseSchema }),
+      // Slightly past the server's own 55s upstream timeout, so the friendlier
+      // server-side 504 message wins when Gemini is merely slow.
+      signal: AbortSignal.timeout(65_000),
+    });
+  } catch (err) {
+    if (err?.name === "TimeoutError" || err?.name === "AbortError")
+      throw new Error("The request timed out. Try again.");
+    throw new Error("Network error — check your connection and try again.");
   }
-  const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  if (!rawText) throw new Error("No response from Gemini.");
-  return rawText;
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error("Unexpected server response. Try again.");
+  }
+  if (!response.ok || data.error) throw new Error(data.error || "API error");
+  if (!data.text) throw new Error("No response from Gemini.");
+  return data.text;
 }
 
-async function callGeminiJSON(prompt, temperature = 0.7, tools = null) {
-  const raw = await callGemini(prompt, temperature, tools);
+async function callGeminiJSON(prompt, options) {
+  const raw = await callGemini(prompt, options);
+  // Grounded responses can wrap the JSON in fences or prose; extract the
+  // outermost object rather than trusting the whole reply to parse.
   const cleaned = raw.replace(/```json|```/g, "").trim();
-  return JSON.parse(cleaned);
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start === -1 || end <= start) throw new SyntaxError("No JSON object in response");
+  return JSON.parse(cleaned.slice(start, end + 1));
 }
+
+// Enforced server-side via Gemini's responseSchema — the scorecard comes back
+// as guaranteed-valid JSON in exactly this shape (ungrounded calls only).
+const SCORECARD_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    overall_score: { type: "NUMBER" },
+    summary: { type: "STRING" },
+    strengths: { type: "ARRAY", items: { type: "STRING" } },
+    improvements: { type: "ARRAY", items: { type: "STRING" } },
+    per_question: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          question_summary: { type: "STRING" },
+          score: { type: "NUMBER" },
+          feedback: { type: "STRING" },
+        },
+        required: ["question_summary", "score", "feedback"],
+      },
+    },
+    final_tip: { type: "STRING" },
+  },
+  required: ["overall_score", "summary", "strengths", "improvements", "per_question", "final_tip"],
+};
 
 // ─────────── Atomic typographic primitives ───────────
 
@@ -324,6 +367,7 @@ export default function PrepAIPro() {
   const [mockQuestionCount, setMockQuestionCount] = useState(0);
   const [mockComplete, setMockComplete] = useState(false);
   const [mockScorecard, setMockScorecard] = useState(null);
+  const [scoreFailed, setScoreFailed] = useState(false);
 
   const [error, setError] = useState("");
   const [showResume, setShowResume] = useState(false);
@@ -411,7 +455,9 @@ export default function PrepAIPro() {
 
   // ── Research
   const fetchResearch = async () => {
-    if (!company.trim()) return;
+    // Guard re-entry: Enter in the inputs calls this directly, bypassing the
+    // disabled button, so a second keypress mid-flight would double-fire.
+    if (!company.trim() || researchLoading) return;
     setResearchLoading(true);
     setError("");
     setResearchData(null);
@@ -446,7 +492,7 @@ Respond ONLY in valid JSON (no markdown fences). Keys:
 }`;
 
     try {
-      const parsed = await callGeminiJSON(prompt, 0.7, [{ google_search: {} }]);
+      const parsed = await callGeminiJSON(prompt, { temperature: 0.7, useSearch: true });
       setResearchData(parsed);
     } catch (err) {
       console.error(err);
@@ -458,6 +504,9 @@ Respond ONLY in valid JSON (no markdown fences). Keys:
 
   // ── Mock Interview
   const startMockInterview = async () => {
+    // Guard re-entry: Enter in the inputs calls this directly — without this,
+    // a keypress mid-interview silently restarts and wipes the transcript.
+    if (mockStarted || mockLoading) return;
     if (!company.trim()) {
       setError("Enter a company name first.");
       return;
@@ -482,13 +531,43 @@ Keep it natural and conversational. Ask ONE question at a time. Do NOT provide f
 Respond ONLY with your interviewer dialogue (no JSON, no labels).`;
 
     try {
-      const response = await callGemini(prompt, 0.8);
+      const response = await callGemini(prompt, { temperature: 0.8 });
       setMockMessages([{ role: "interviewer", text: response }]);
       setMockQuestionCount(1);
     } catch (err) {
       console.error(err);
       setError(err.message);
       setMockStarted(false);
+    } finally {
+      setMockLoading(false);
+    }
+  };
+
+  // Callable from the normal flow AND from the retry button, so a failed
+  // scoring run is never a dead end (and retrying adds no junk to the transcript).
+  const generateScorecard = async (transcriptMessages) => {
+    setMockLoading(true);
+    setScoreFailed(false);
+    setError("");
+
+    const scorecardPrompt = `You conducted a mock interview for ${company.trim()}${role.trim() ? ` (${role.trim()})` : ""}. Difficulty: ${mockDifficulty}.
+
+Here is the full interview transcript:
+${transcriptMessages.map(m => `${m.role === "interviewer" ? "INTERVIEWER" : "CANDIDATE"}: ${m.text}`).join("\n\n")}
+
+Provide a final evaluation. Scores are numbers from 1-10. "summary" is a 2-3 sentence overall assessment. "strengths" and "improvements" each have 3 items. "per_question" covers each question with a brief summary, score, and specific feedback. "final_tip" is one powerful closing piece of advice.`;
+
+    try {
+      const scorecard = await callGeminiJSON(scorecardPrompt, {
+        temperature: 0.5,
+        responseSchema: SCORECARD_SCHEMA,
+      });
+      setMockScorecard(scorecard);
+      setMockComplete(true);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to generate scorecard. " + err.message);
+      setScoreFailed(true);
     } finally {
       setMockLoading(false);
     }
@@ -506,33 +585,7 @@ Respond ONLY with your interviewer dialogue (no JSON, no labels).`;
     const newCount = mockQuestionCount + 1;
 
     if (newCount > 5) {
-      const scorecardPrompt = `You conducted a mock interview for ${company.trim()}${role.trim() ? ` (${role.trim()})` : ""}. Difficulty: ${mockDifficulty}.
-
-Here is the full interview transcript:
-${updatedMessages.map(m => `${m.role === "interviewer" ? "INTERVIEWER" : "CANDIDATE"}: ${m.text}`).join("\n\n")}
-
-Provide a final evaluation. Respond ONLY in valid JSON:
-{
-  "overall_score": (number 1-10),
-  "summary": "2-3 sentence overall assessment",
-  "strengths": ["strength1", "strength2", "strength3"],
-  "improvements": ["area1", "area2", "area3"],
-  "per_question": [
-    {"question_summary": "brief question", "score": (1-10), "feedback": "specific feedback"}
-  ],
-  "final_tip": "One powerful closing piece of advice"
-}`;
-
-      try {
-        const scorecard = await callGeminiJSON(scorecardPrompt, 0.5);
-        setMockScorecard(scorecard);
-        setMockComplete(true);
-      } catch (err) {
-        console.error(err);
-        setError("Failed to generate scorecard. " + err.message);
-      } finally {
-        setMockLoading(false);
-      }
+      await generateScorecard(updatedMessages);
       return;
     }
 
@@ -551,7 +604,7 @@ ${newCount === 5 ? "This is the FINAL question — make it count." : ""}
 Keep it natural. Respond only with your interviewer dialogue.`;
 
     try {
-      const response = await callGemini(nextPrompt, 0.8);
+      const response = await callGemini(nextPrompt, { temperature: 0.8 });
       setMockMessages(prev => [...prev, { role: "interviewer", text: response }]);
       setMockQuestionCount(newCount);
     } catch (err) {
@@ -575,6 +628,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
     setMockQuestionCount(0);
     setMockComplete(false);
     setMockScorecard(null);
+    setScoreFailed(false);
     setError("");
   };
 
@@ -1218,7 +1272,20 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                   )}
                 </div>
 
-                {!mockComplete && (
+                {!mockComplete && scoreFailed && !mockLoading && (
+                  <>
+                    <Hairline />
+                    <div style={{ textAlign: "center", marginTop: 22, display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+                      <SmallLabel color="var(--ink-3)">Your answers are safe — scoring just failed.</SmallLabel>
+                      <button onClick={() => generateScorecard(mockMessages)} className="btn-press" style={S.actionBtn}>
+                        <span>Retry scoring</span>
+                        <span style={S.actionBtnArrow}>↻</span>
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {!mockComplete && !scoreFailed && (
                   <>
                     <Hairline />
                     <div style={S.replyRow}>
