@@ -111,6 +111,16 @@ input:focus, textarea:focus { outline: none; }
 button { background: none; border: none; cursor: pointer; }
 textarea { resize: vertical; }
 
+/* Keyboard focus — visible, on-brand. Mouse clicks stay clean via :focus-visible. */
+input:focus-visible, textarea:focus-visible {
+  box-shadow: 0 2px 0 0 var(--vermillion);
+}
+button:focus-visible {
+  outline: 2px solid var(--vermillion);
+  outline-offset: 3px;
+}
+button:disabled { cursor: not-allowed; }
+
 input::placeholder,
 textarea::placeholder {
   color: color-mix(in srgb, var(--ink-3) 80%, transparent);
@@ -287,8 +297,47 @@ input, textarea {
   animation: blink 1.05s steps(1) infinite;
 }
 
-/* ─── Responsive ─── */
+/* ─── Motion preferences ─── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Touch devices: hover transforms just cause jitter on tap */
+@media (hover: none) {
+  .hover-stamp:hover, .btn-press:hover { transform: none; box-shadow: none; }
+}
+
+/* ─── Responsive ───
+   Layout lives in inline styles (App.jsx), so breakpoint overrides target
+   the data-* hooks and need !important to win over the style attribute. */
 @media (max-width: 880px) {
   .dossier-body { font-size: 16px; }
   .dossier-body .md-h3 { font-size: 20px; }
+
+  [data-edge-ribbon] { display: none !important; }
+  [data-container] { padding-left: 20px !important; padding-right: 20px !important; }
+  [data-top-bar-inner] { padding-left: 20px !important; padding-right: 20px !important; }
+  [data-top-bar-mid] { display: none !important; }
+
+  [data-hero-grid] { grid-template-columns: 1fr !important; gap: 36px !important; }
+  [data-mode-grid] { grid-template-columns: 1fr !important; }
+  [data-loading-grid] { grid-template-columns: 1fr !important; gap: 24px !important; }
+  [data-swot-grid] { grid-template-columns: 1fr !important; }
+  [data-footer-grid] { grid-template-columns: 1fr !important; gap: 28px !important; }
+  [data-empty-stamp] { display: none !important; }
+}
+
+@media (max-width: 560px) {
+  [data-form-grid] { grid-template-columns: 1fr !important; }
+  [data-form-field] { border-right: none !important; border-bottom: var(--hair-soft); }
+  [data-difficulty-row] { grid-template-columns: 1fr !important; }
+
+  [data-transcript-turn] { grid-template-columns: 1fr !important; gap: 6px !important; }
+  [data-transcript-speaker] { flex-direction: row !important; align-items: baseline; gap: 8px; }
+  [data-transcript-speaker][data-side="right"] { justify-content: flex-end; }
 }

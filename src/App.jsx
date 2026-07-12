@@ -822,7 +822,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
   return (
     <div style={S.shell}>
       {/* Vertical edge ribbon — confidential running text on the left margin (desktop only) */}
-      <aside style={S.edgeRibbon} aria-hidden>
+      <aside data-edge-ribbon style={S.edgeRibbon} aria-hidden>
         <div style={S.edgeRibbonText}>
           PRIVATE · FOR YOU ONLY · PRIVATE · FOR YOU ONLY · PRIVATE · FOR YOU ONLY ·
         </div>
@@ -830,7 +830,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
 
       {/* ─── Top masthead bar ─── */}
       <div style={S.topBar}>
-        <div style={S.topBarInner}>
+        <div data-top-bar-inner style={S.topBarInner}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <div style={S.monogram} aria-hidden>P</div>
             <SmallLabel color="var(--ink)">PrepAI//Pro</SmallLabel>
@@ -851,7 +851,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
         <Hairline thick />
       </div>
 
-      <main style={S.container}>
+      <main data-container style={S.container}>
 
         {/* ═══════════ HERO MASTHEAD ═══════════ */}
         <header style={S.hero}>
@@ -1020,14 +1020,16 @@ Keep it natural. Respond only with your interviewer dialogue.`;
 
           <div data-form-grid style={S.formGrid}>
             <div data-form-field style={S.field}>
-              <label style={S.fieldLabel}>
+              <label htmlFor="company-input" style={S.fieldLabel}>
                 <span style={S.fieldNum}>01</span>
                 Company
                 <span style={S.fieldRequired}>· required</span>
               </label>
               <input
+                id="company-input"
                 ref={inputRef}
                 type="text"
+                autoComplete="organization"
                 placeholder="e.g. Stripe, Apple, Netflix…"
                 value={company}
                 onChange={e => setCompany(e.target.value)}
@@ -1036,13 +1038,15 @@ Keep it natural. Respond only with your interviewer dialogue.`;
               />
             </div>
             <div data-form-field style={S.field}>
-              <label style={S.fieldLabel}>
+              <label htmlFor="role-input" style={S.fieldLabel}>
                 <span style={S.fieldNum}>02</span>
                 Role
                 <span style={S.fieldRequired}>· optional</span>
               </label>
               <input
+                id="role-input"
                 type="text"
+                autoComplete="organization-title"
                 placeholder="e.g. Data Engineer, PM, SWE…"
                 value={role}
                 onChange={e => setRole(e.target.value)}
@@ -1056,6 +1060,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
           <div style={{ marginTop: 4 }}>
             <button
               onClick={() => setShowResume(!showResume)}
+              aria-expanded={showResume}
               style={S.credentialsToggle}
             >
               <span style={{ fontFamily: "var(--mono)", fontSize: 14, marginRight: 4, lineHeight: 1 }}>
@@ -1133,6 +1138,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
           <div style={{ marginTop: 4 }}>
             <button
               onClick={() => setShowJd(!showJd)}
+              aria-expanded={showJd}
               style={S.credentialsToggle}
             >
               <span style={{ fontFamily: "var(--mono)", fontSize: 14, marginRight: 4, lineHeight: 1 }}>
@@ -1192,6 +1198,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                     <button
                       key={d.id}
                       onClick={() => setMockDifficulty(d.id)}
+                      aria-pressed={sel}
                       className="hover-stamp"
                       style={{
                         ...S.diffTile,
@@ -1275,7 +1282,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
 
         {/* Error notice */}
         {error && (
-          <div style={S.errorNotice}>
+          <div role="alert" style={S.errorNotice}>
             <SmallLabel color="var(--vermillion)">⚠ Something went wrong</SmallLabel>
             <p style={{ fontFamily: "var(--serif)", fontSize: 15, color: "var(--ink)", marginTop: 4, fontStyle: "italic" }}>
               {error}
@@ -1336,6 +1343,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                       <button
                         key={s.id}
                         onClick={() => setActiveTab(s.id)}
+                        aria-current={isActive || undefined}
                         className="tab-rule hover-stamp"
                         data-active={isActive}
                         style={{
@@ -1431,6 +1439,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                         setVoiceOn(v => !v);
                       }}
                       className="hover-stamp"
+                      aria-pressed={voiceOn}
                       title="Read the interviewer's questions aloud"
                       style={{
                         ...S.voiceToggle,
@@ -1445,7 +1454,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
 
                 <Hairline />
 
-                <div style={S.transcript}>
+                <div style={S.transcript} aria-live="polite">
                   {mockMessages.length === 0 && mockLoading && (
                     <LoadingPanel kind="mock-init" subject={company} hasResume={!!resume.trim()} />
                   )}
@@ -1567,6 +1576,12 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                         onClick={recState === "recording" ? stopVoiceAnswer : startVoiceAnswer}
                         disabled={mockLoading || recState === "transcribing"}
                         className="btn-press"
+                        aria-pressed={recState === "recording"}
+                        aria-label={
+                          recState === "recording" ? "Stop recording"
+                          : recState === "transcribing" ? "Transcribing"
+                          : "Answer by voice"
+                        }
                         title={recState === "recording" ? "Stop recording" : "Answer by voice"}
                         style={{
                           ...S.micBtn,
@@ -1948,7 +1963,7 @@ function LoadingPanel({ subject, kind, hasResume, hasJd }) {
   }, []);
 
   return (
-    <div style={S.loadingPanel}>
+    <div style={S.loadingPanel} role="status" aria-live="polite">
       <div style={S.loadingHead}>
         <SmallLabel color="var(--vermillion)">§ {config.action}</SmallLabel>
         <SmallLabel color="var(--ink-4)">{config.eta}</SmallLabel>
