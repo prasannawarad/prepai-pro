@@ -2,6 +2,10 @@ import { useState, useRef, useEffect, useMemo } from "react";
 
 const MAX_RESUME_FILE_BYTES = 512 * 1024;
 const MAX_RESUME_CHARS = 80_000;
+const MAX_PDF_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_JD_CHARS = 30_000;
+const MAX_RECORDING_MS = 180_000;           // auto-stop voice answers at 3 min
+const MAX_AUDIO_BYTES = 3 * 1024 * 1024;    // matches the /api/transcribe cap
 
 /* ─────────────────────────────────────────────────────────────────────
    PREPAI//PRO  ·  Editorial Intelligence Briefing (mid-dark)
@@ -17,6 +21,7 @@ const RESEARCH_SECTIONS = [
   { id: "news",           num: "4", label: "Latest news" },
   { id: "interview_tips", num: "5", label: "Interview playbook" },
   { id: "star_stories",   num: "6", label: "Your STAR stories" },
+  { id: "fit_gaps",       num: "7", label: "Fit & gaps" },
 ];
 
 const DIFFICULTY_LEVELS = [
@@ -68,15 +73,16 @@ const INTERVIEW_TIPS = [
 ];
 
 // Steps shown progressively while the company brief loads.
-const RESEARCH_STEPS_FULL = [
+const RESEARCH_STEPS_BASE = [
   "Searching the public web",
   "Building timeline & milestones",
   "Mapping products, customers & competitors",
   "Synthesizing culture & ways of working",
   "Collecting recent headlines",
   "Drafting interview playbook",
-  "Writing your STAR stories",
 ];
+const RESEARCH_STEP_JD = "Mapping you against the job posting";
+const RESEARCH_STEP_STAR = "Writing your STAR stories";
 const MOCK_INIT_STEPS = [
   "Briefing your interviewer",
   "Setting the difficulty",
@@ -87,6 +93,23 @@ const MOCK_REPORT_STEPS = [
   "Scoring each answer",
   "Writing your feedback",
 ];
+
+// ─── PDF text extraction (pdfjs is lazy-loaded so it never weighs down
+//     the main bundle — only users who pick a .pdf pay for it) ───
+async function extractPdfText(file) {
+  const pdfjs = await import("pdfjs-dist");
+  const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
+  pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+  const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+  const pageCount = Math.min(doc.numPages, 10);
+  let text = "";
+  for (let p = 1; p <= pageCount; p++) {
+    const page = await doc.getPage(p);
+    const content = await page.getTextContent();
+    text += content.items.map(item => item.str).join(" ") + "\n\n";
+  }
+  return text;
+}
 
 // ─── Markdown → editorial HTML ───
 // Escape first: the text comes from an LLM (with search grounding, it can echo
@@ -103,6 +126,9 @@ function escapeHtml(text) {
 
 function parseMarkdown(text) {
   if (!text) return "";
+  // The model very occasionally returns nested JSON where a markdown string
+  // was asked for — degrade to readable text rather than crashing the render.
+  if (typeof text !== "string") text = JSON.stringify(text, null, 2);
   return escapeHtml(text)
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.*?)\*/g, "<em>$1</em>")
@@ -352,6 +378,7 @@ export default function PrepAIPro() {
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
   const [resume, setResume] = useState("");
+  const [jd, setJd] = useState("");
   const [activeMode, setActiveMode] = useState("research");
   const [activeTab, setActiveTab] = useState("history");
 
@@ -371,15 +398,43 @@ export default function PrepAIPro() {
 
   const [error, setError] = useState("");
   const [showResume, setShowResume] = useState(false);
+  const [showJd, setShowJd] = useState(false);
   const [now, setNow] = useState(() => new Date());
+
+  // Voice: "idle" | "recording" | "transcribing" (transcribing = Whisper path only)
+  const [recState, setRecState] = useState("idle");
+  const [voiceOn, setVoiceOn] = useState(false);
 
   const inputRef = useRef(null);
   const chatEndRef = useRef(null);
   const mockInputRef = useRef(null);
   const resumeFileRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const recTimeoutRef = useRef(null);
 
   const ingestResumeFile = (file) => {
     if (!file) return;
+    const isPdf = /\.pdf$/i.test(file.name) || file.type === "application/pdf";
+    if (isPdf) {
+      if (file.size > MAX_PDF_FILE_BYTES) {
+        setError(`PDF is too large — max ${MAX_PDF_FILE_BYTES / (1024 * 1024)} MB.`);
+        return;
+      }
+      setError("");
+      extractPdfText(file)
+        .then(text => {
+          const trimmed = text.replace(/[ \t]+/g, " ").trim();
+          if (!trimmed) {
+            setError("Couldn't find selectable text in that PDF — is it a scan? Paste the text instead.");
+            return;
+          }
+          setResume(trimmed.slice(0, MAX_RESUME_CHARS));
+          setShowResume(true);
+        })
+        .catch(() => setError("Could not read that PDF — try pasting the text instead."));
+      return;
+    }
     if (file.size > MAX_RESUME_FILE_BYTES) {
       setError(`Resume file is too large — max ${MAX_RESUME_FILE_BYTES / 1024} KB. Trim or paste instead.`);
       return;
@@ -416,18 +471,16 @@ export default function PrepAIPro() {
   }, []);
 
   // ── Derived
-  const visibleSections = resume.trim()
-    ? RESEARCH_SECTIONS
-    : RESEARCH_SECTIONS.filter(s => s.id !== "star_stories");
+  const visibleSections = useMemo(() => RESEARCH_SECTIONS.filter(s =>
+    (s.id !== "star_stories" || resume.trim()) &&
+    (s.id !== "fit_gaps" || jd.trim())
+  ), [resume, jd]);
 
   useEffect(() => {
-    const allowed = resume.trim()
-      ? RESEARCH_SECTIONS
-      : RESEARCH_SECTIONS.filter(s => s.id !== "star_stories");
-    if (!allowed.some(s => s.id === activeTab)) {
-      setActiveTab(allowed[0]?.id ?? "history");
+    if (!visibleSections.some(s => s.id === activeTab)) {
+      setActiveTab(visibleSections[0]?.id ?? "history");
     }
-  }, [resume, activeTab]);
+  }, [visibleSections, activeTab]);
 
   const dateStr = useMemo(() =>
     now.toLocaleDateString("en-US", { weekday: "short", year: "numeric", month: "short", day: "2-digit" }).toUpperCase(),
@@ -453,6 +506,126 @@ export default function PrepAIPro() {
     return `${slug}-${yr}-Q${Math.floor((now.getMonth()) / 3) + 1}`;
   }, [company, now]);
 
+  // ── Voice answers
+  // Two free paths, picked by capability: browsers with the Web Speech API
+  // (Chrome/Edge/Safari) dictate live into the input with no server round-trip;
+  // others (Firefox) record via MediaRecorder and transcribe through
+  // /api/transcribe (Whisper on Groq).
+  const SpeechRec = typeof window !== "undefined"
+    ? (window.SpeechRecognition || window.webkitSpeechRecognition)
+    : null;
+
+  const stopVoiceAnswer = () => {
+    recognitionRef.current?.stop();
+    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+    clearTimeout(recTimeoutRef.current);
+  };
+
+  const startVoiceAnswer = async () => {
+    if (recState !== "idle" || mockLoading) return;
+    window.speechSynthesis?.cancel(); // don't let the mic pick up the interviewer
+    setError("");
+
+    if (SpeechRec) {
+      const rec = new SpeechRec();
+      rec.lang = "en-US";
+      rec.continuous = true;
+      rec.interimResults = true;
+      const base = mockInput.trim() ? mockInput.trim() + " " : "";
+      let finalText = "";
+      rec.onresult = (e) => {
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) finalText += t + " ";
+          else interim += t;
+        }
+        setMockInput((base + finalText + interim).trimStart());
+      };
+      rec.onerror = (e) => {
+        if (e.error === "not-allowed" || e.error === "service-not-allowed")
+          setError("Microphone access was blocked — allow it in your browser settings.");
+      };
+      rec.onend = () => {
+        setRecState("idle");
+        clearTimeout(recTimeoutRef.current);
+      };
+      recognitionRef.current = rec;
+      rec.start();
+      setRecState("recording");
+      recTimeoutRef.current = setTimeout(() => rec.stop(), MAX_RECORDING_MS);
+      return;
+    }
+
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setError("Microphone access was blocked — allow it and try again.");
+      return;
+    }
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
+      .find(m => window.MediaRecorder?.isTypeSupported(m));
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 48_000 } : undefined);
+    const chunks = [];
+    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      clearTimeout(recTimeoutRef.current);
+      const blob = new Blob(chunks, { type: (recorder.mimeType || "audio/webm").split(";")[0] });
+      if (blob.size === 0) { setRecState("idle"); return; }
+      if (blob.size > MAX_AUDIO_BYTES) {
+        setError("Recording too large — keep answers under ~3 minutes.");
+        setRecState("idle");
+        return;
+      }
+      setRecState("transcribing");
+      try {
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        const response = await fetch("/api/transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ audio: base64, mimeType: blob.type }),
+          signal: AbortSignal.timeout(60_000),
+        });
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error || "Transcription failed.");
+        setMockInput(prev => (prev.trim() ? prev.trim() + " " : "") + data.text);
+      } catch (err) {
+        setError(err.message || "Transcription failed — type your answer instead.");
+      } finally {
+        setRecState("idle");
+      }
+    };
+    mediaRecorderRef.current = recorder;
+    recorder.start();
+    setRecState("recording");
+    recTimeoutRef.current = setTimeout(() => {
+      if (recorder.state === "recording") recorder.stop();
+    }, MAX_RECORDING_MS);
+  };
+
+  // Interviewer speaks new questions aloud when voice is on.
+  useEffect(() => {
+    if (!voiceOn || !mockStarted || mockComplete) return;
+    const last = mockMessages[mockMessages.length - 1];
+    if (!last || last.role !== "interviewer") return;
+    const utterance = new SpeechSynthesisUtterance(last.text);
+    utterance.lang = "en-US";
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  }, [mockMessages, voiceOn, mockStarted, mockComplete]);
+
+  useEffect(() => () => {
+    window.speechSynthesis?.cancel();
+    clearTimeout(recTimeoutRef.current);
+  }, []);
+
   // ── Research
   const fetchResearch = async () => {
     // Guard re-entry: Enter in the inputs calls this directly, bypassing the
@@ -470,7 +643,11 @@ export default function PrepAIPro() {
 
     const roleLine = role.trim() ? ` The candidate is targeting: ${role.trim()}. Reflect this in business fit, playbook, and STAR mapping.` : "";
 
-    const prompt = `You are an expert career coach and company research analyst. Research "${company.trim()}" using timely public information.${roleLine}${resumeContext}
+    const jdContext = jd.trim()
+      ? `\n\nThe job posting the candidate is targeting:\n${jd.trim()}\n\nTailor the business fit, interview playbook, and likely question themes to this posting, and produce the fit_gaps field as described.`
+      : "";
+
+    const prompt = `You are an expert career coach and company research analyst. Research "${company.trim()}" using timely public information.${roleLine}${resumeContext}${jdContext}
 
 Writing rules for ALL markdown fields: prefer concrete facts; where inference or rumor appears, label it briefly (e.g. "reported", "unclear"); keep sentences tight for screen reading; use ## subheads inside longer sections when helpful.
 
@@ -488,7 +665,12 @@ Respond ONLY in valid JSON (no markdown fences). Keys:
   "interview_tips": "Markdown playbook titled implicitly for candidates.${role.trim() ? ` Prioritize ${role.trim()} where relevant.` : ""} Structure exactly with these ## headings in order: ## Hiring process — rounds, timeline hints, virtual vs onsite, homework/take-homes if publicly discussed. ## What they evaluate — signals and competencies repeatedly mentioned for this company. ## Likely question themes — 6-8 bullets (${role.trim() ? `skew toward ${role.trim()}` : "behavioral + role-agnostic"}). ## Questions you should ask them — 4-5 sharp questions referencing their strategy/news. ## Logistics & prep — 4-6 bullets (research tasks, stories to rehearse, red flags to watch).",
   "star_stories": "${resume.trim()
         ? "Markdown: 4-5 STAR stories from the resume only (Situation, Task, Action, Result). Each: **Title**, **Maps to** (company value or interview theme), then STAR paragraphs. Quantify impact where the resume allows; never invent employers or metrics."
-        : "Markdown: Two short paragraphs explaining that STAR stories appear when the candidate pastes a resume or uploads a .txt/.md file, then re-runs Research company."}"
+        : "Markdown: Two short paragraphs explaining that STAR stories appear when the candidate pastes a resume or uploads a resume file, then re-runs Research company."}",
+  "fit_gaps": "${jd.trim()
+        ? `Markdown: ## What they're really hiring for — decode the posting's top priorities in plain language. ${resume.trim()
+            ? "## Where you match — map specific resume evidence to each major requirement. ## Gaps & how to address them — honest gaps plus one mitigation talking point each; never invent experience."
+            : "## What a strong candidate shows — the evidence interviewers will look for against each requirement (no resume provided, so stay general)."} ## Tailored talking points — 4-5 bullets the candidate should work into answers, tied to the posting's own language.`
+        : "Markdown: Two short sentences explaining that this tab fills in when the candidate pastes the job posting and re-runs Research company."}"
 }`;
 
     try {
@@ -520,7 +702,7 @@ Respond ONLY in valid JSON (no markdown fences). Keys:
     setError("");
 
     const prompt = `You are an interviewer at ${company.trim()}${role.trim() ? ` for the ${role.trim()} role` : ""}. Difficulty: ${mockDifficulty}.
-${resume.trim() ? `Candidate resume:\n${resume.trim()}\n` : ""}
+${resume.trim() ? `Candidate resume:\n${resume.trim()}\n` : ""}${jd.trim() ? `The job posting:\n${jd.trim()}\nGround your questions in this posting's requirements and language.\n` : ""}
 
 Start the mock interview. Greet the candidate briefly, then ask your FIRST interview question. 
 - For "easy": behavioral/intro questions
@@ -575,6 +757,7 @@ Provide a final evaluation. Scores are numbers from 1-10. "summary" is a 2-3 sen
 
   const sendMockAnswer = async () => {
     if (!mockInput.trim() || mockLoading) return;
+    stopVoiceAnswer();
     const userAnswer = mockInput.trim();
     setMockInput("");
 
@@ -594,7 +777,7 @@ Provide a final evaluation. Scores are numbers from 1-10. "summary" is a 2-3 sen
       .join("\n\n");
 
     const nextPrompt = `You are an interviewer at ${company.trim()}${role.trim() ? ` for ${role.trim()}` : ""}. Difficulty: ${mockDifficulty}.
-${resume.trim() ? `Candidate resume:\n${resume.trim()}\n` : ""}
+${resume.trim() ? `Candidate resume:\n${resume.trim()}\n` : ""}${jd.trim() ? `The job posting:\n${jd.trim()}\n` : ""}
 
 Interview so far:
 ${conversationHistory}
@@ -621,6 +804,8 @@ Keep it natural. Respond only with your interviewer dialogue.`;
   };
 
   const resetMock = () => {
+    stopVoiceAnswer();
+    window.speechSynthesis?.cancel();
     setMockStarted(false);
     setMockMessages([]);
     setMockInput("");
@@ -882,7 +1067,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                 fontWeight: 400, letterSpacing: "0.12em", marginLeft: 8,
                 textTransform: "none",
               }}>
-                — paste or upload .txt / .md
+                — paste or upload .txt / .md / .pdf
               </span>
               <span style={{
                 flex: 1, marginLeft: 10, marginRight: 10,
@@ -902,9 +1087,9 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                 <input
                   ref={resumeFileRef}
                   type="file"
-                  accept=".txt,.md,text/plain,text/markdown"
+                  accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf"
                   style={{ display: "none" }}
-                  aria-label="Upload resume as plain text file"
+                  aria-label="Upload resume file"
                   onChange={(e) => {
                     ingestResumeFile(e.target.files?.[0]);
                     e.target.value = "";
@@ -924,10 +1109,10 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                     className="hover-stamp"
                     style={S.resumeFileBtn}
                   >
-                    Upload .txt / .md
+                    Upload .txt / .md / .pdf
                   </button>
                   <span style={S.resumeToolbarHint}>
-                    Max {MAX_RESUME_FILE_BYTES / 1024} KB · .txt / .md · not PDF
+                    Max {MAX_RESUME_FILE_BYTES / 1024} KB text · {MAX_PDF_FILE_BYTES / (1024 * 1024)} MB PDF
                   </span>
                   <span style={S.resumeToolbarMeta}>
                     {resume.length.toLocaleString()} / {MAX_RESUME_CHARS.toLocaleString()} chars
@@ -944,10 +1129,62 @@ Keep it natural. Respond only with your interviewer dialogue.`;
             )}
           </div>
 
+          {/* Job posting toggle */}
+          <div style={{ marginTop: 4 }}>
+            <button
+              onClick={() => setShowJd(!showJd)}
+              style={S.credentialsToggle}
+            >
+              <span style={{ fontFamily: "var(--mono)", fontSize: 14, marginRight: 4, lineHeight: 1 }}>
+                {showJd ? "▾" : "▸"}
+              </span>
+              <span>04 · Add the job posting</span>
+              <span style={{
+                fontFamily: "var(--mono)", fontSize: 10, color: "var(--ink-4)",
+                fontWeight: 400, letterSpacing: "0.12em", marginLeft: 8,
+                textTransform: "none",
+              }}>
+                — unlocks fit & gap analysis
+              </span>
+              <span style={{
+                flex: 1, marginLeft: 10, marginRight: 10,
+                borderBottom: "1px dotted color-mix(in srgb, var(--ink) 40%, transparent)",
+                transform: "translateY(-3px)",
+              }} />
+              <span style={{
+                fontFamily: "var(--mono)", fontSize: 10,
+                color: jd.trim() ? "var(--forest)" : "var(--ink-4)",
+                fontWeight: 700, letterSpacing: "0.18em",
+              }}>
+                {jd.trim() ? "● ADDED" : "○ OPTIONAL"}
+              </span>
+            </button>
+            {showJd && (
+              <div style={{ marginTop: 12, animation: "fadeUp 0.3s ease both" }}>
+                <textarea
+                  placeholder="Paste the job posting here — the brief gains a Fit & gaps tab, and mock questions use the posting's own requirements."
+                  value={jd}
+                  onChange={e => setJd(e.target.value.slice(0, MAX_JD_CHARS))}
+                  rows={6}
+                  style={S.textarea}
+                />
+                <div style={{
+                  fontFamily: "var(--mono)", fontSize: 10,
+                  color: "var(--ink-4)", marginTop: 8, letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap",
+                }}>
+                  <span>Stays in memory until you refresh · sent only inside your Gemini prompt</span>
+                  <span>{jd.length.toLocaleString()} / {MAX_JD_CHARS.toLocaleString()} chars</span>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Difficulty (mock only) */}
           {activeMode === "mock" && (
             <div style={{ marginTop: 22, animation: "fadeUp 0.3s ease" }}>
-              <SmallLabel>04 · Difficulty</SmallLabel>
+              <SmallLabel>05 · Difficulty</SmallLabel>
               <div data-difficulty-row style={S.difficultyRow}>
                 {DIFFICULTY_LEVELS.map(d => {
                   const sel = mockDifficulty === d.id;
@@ -1051,7 +1288,7 @@ Keep it natural. Respond only with your interviewer dialogue.`;
         {/* ═══════════ RESEARCH MODE ═══════════ */}
         {activeMode === "research" && (
           <section style={{ paddingTop: 28 }}>
-            {researchLoading && <LoadingPanel subject={company} kind="dossier" hasResume={!!resume.trim()} />}
+            {researchLoading && <LoadingPanel subject={company} kind="dossier" hasResume={!!resume.trim()} hasJd={!!jd.trim()} />}
 
             {researchData && !researchLoading && (
               <article style={{ animation: "fadeUp 0.6s cubic-bezier(.2,.7,.2,1) both" }}>
@@ -1188,6 +1425,21 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                         width: `${(Math.min(mockQuestionCount, 5) / 5) * 100}%`,
                       }} />
                     </div>
+                    <button
+                      onClick={() => {
+                        if (voiceOn) window.speechSynthesis?.cancel();
+                        setVoiceOn(v => !v);
+                      }}
+                      className="hover-stamp"
+                      title="Read the interviewer's questions aloud"
+                      style={{
+                        ...S.voiceToggle,
+                        color: voiceOn ? "var(--vermillion)" : "var(--ink-3)",
+                        borderColor: voiceOn ? "color-mix(in srgb, var(--vermillion) 55%, transparent)" : "color-mix(in srgb, var(--ink) 22%, transparent)",
+                      }}
+                    >
+                      {voiceOn ? "◉ Interviewer voice · on" : "○ Interviewer voice · off"}
+                    </button>
                   </div>
                 </div>
 
@@ -1299,13 +1551,34 @@ Keep it natural. Respond only with your interviewer dialogue.`;
                       <input
                         ref={mockInputRef}
                         type="text"
-                        placeholder={mockQuestionCount >= 5 ? "Last one — type your answer…" : "Type your answer and press Enter…"}
+                        placeholder={
+                          recState === "recording" ? "Listening — speak your answer…"
+                          : recState === "transcribing" ? "Transcribing your answer…"
+                          : mockQuestionCount >= 5 ? "Last one — type or speak your answer…"
+                          : "Type your answer and press Enter — or tap Rec to speak…"
+                        }
                         value={mockInput}
                         onChange={e => setMockInput(e.target.value)}
                         onKeyDown={e => e.key === "Enter" && sendMockAnswer()}
                         disabled={mockLoading}
                         style={S.replyInput}
                       />
+                      <button
+                        onClick={recState === "recording" ? stopVoiceAnswer : startVoiceAnswer}
+                        disabled={mockLoading || recState === "transcribing"}
+                        className="btn-press"
+                        title={recState === "recording" ? "Stop recording" : "Answer by voice"}
+                        style={{
+                          ...S.micBtn,
+                          background: recState === "recording" ? "var(--vermillion)" : "transparent",
+                          color: recState === "recording" ? "var(--paper)" : "var(--ink)",
+                          borderColor: recState === "recording" ? "var(--vermillion)" : "color-mix(in srgb, var(--ink) 28%, transparent)",
+                          opacity: (mockLoading || recState === "transcribing") ? 0.4 : 1,
+                          animation: recState === "recording" ? "softPulse 1.4s ease infinite" : "none",
+                        }}
+                      >
+                        {recState === "recording" ? "■ Stop" : recState === "transcribing" ? "◴ …" : "● Rec"}
+                      </button>
                       <button
                         onClick={sendMockAnswer}
                         disabled={mockLoading || !mockInput.trim()}
@@ -1577,8 +1850,8 @@ function EmptyState({ kind, onPick, hasResume }) {
           </h3>
           <p style={S.emptyDek}>
             {kind === "dossier"
-              ? "Open tabs for history, products & market, culture, latest news, interview playbook, and STAR stories after you add a resume."
-              : "Five chat turns, then a scorecard: overall score, strengths, improvements, and notes per question."}
+              ? "Open tabs for history, products & market, culture, latest news, and the interview playbook — plus STAR stories when you add a resume, and fit & gaps when you paste the job posting."
+              : "Five chat turns, then a scorecard: overall score, strengths, improvements, and notes per question. Answer by typing or tap ● Rec to speak."}
             {kind === "simulation" && !hasResume && (
               <span style={{ display: "block", marginTop: 10, color: "var(--ink-3)" }}>
                 <em>Tip:</em> add your resume above for questions tailored to your background.
@@ -1628,7 +1901,7 @@ function EmptyState({ kind, onPick, hasResume }) {
 }
 
 // ─────────── Engaging loading panel ───────────
-function LoadingPanel({ subject, kind, hasResume }) {
+function LoadingPanel({ subject, kind, hasResume, hasJd }) {
   const config = useMemo(() => {
     if (kind === "report") return {
       title: "Reviewing your interview",
@@ -1648,10 +1921,14 @@ function LoadingPanel({ subject, kind, hasResume }) {
       title: `Preparing your brief on ${subject}`,
       action: `Researching ${subject}`,
       eta: "Usually takes 8–15 seconds",
-      steps: hasResume ? RESEARCH_STEPS_FULL : RESEARCH_STEPS_FULL.slice(0, -1),
+      steps: [
+        ...RESEARCH_STEPS_BASE,
+        ...(hasJd ? [RESEARCH_STEP_JD] : []),
+        ...(hasResume ? [RESEARCH_STEP_STAR] : []),
+      ],
       stepEvery: 2400,
     };
-  }, [kind, subject, hasResume]);
+  }, [kind, subject, hasResume, hasJd]);
 
   const [stepIdx, setStepIdx] = useState(0);
   const [tipIdx, setTipIdx]   = useState(() => Math.floor(Math.random() * INTERVIEW_TIPS.length));
@@ -2472,6 +2749,33 @@ const S = {
     border: "1px solid color-mix(in srgb, var(--ink) 28%, transparent)",
     cursor: "pointer",
     boxShadow: "0 0 24px color-mix(in srgb, var(--vermillion) 18%, transparent)",
+  },
+  micBtn: {
+    background: "transparent",
+    color: "var(--ink)",
+    fontFamily: "var(--mono)",
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: "0.14em",
+    textTransform: "uppercase",
+    padding: "12px 16px",
+    border: "1px solid color-mix(in srgb, var(--ink) 28%, transparent)",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  voiceToggle: {
+    marginTop: 10,
+    width: "100%",
+    background: "transparent",
+    color: "var(--ink-3)",
+    fontFamily: "var(--mono)",
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: "0.18em",
+    textTransform: "uppercase",
+    padding: "7px 10px",
+    border: "1px solid color-mix(in srgb, var(--ink) 22%, transparent)",
+    cursor: "pointer",
   },
 
   // ── Scorecard

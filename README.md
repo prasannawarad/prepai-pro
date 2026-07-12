@@ -22,11 +22,13 @@ PrepAI Pro transforms the interview preparation process into a structured, AI-dr
 ### 🔍 MODE 1: Company Research
 - **Dossier tabs**: *History*, *Products & market*, *Culture*, *Latest news*, and an *Interview playbook*.
 - **Role-aware**: Add a role to bias the playbook + question themes toward your target job.
-- **STAR stories**: Paste resume text **or upload a `.txt` / `.md` file** to generate 4–5 STAR stories mapped to interview themes.
+- **STAR stories**: Paste resume text **or upload a `.txt` / `.md` / `.pdf` file** to generate 4–5 STAR stories mapped to interview themes.
+- **Fit & gaps**: Paste the actual job posting to get a requirement-by-requirement match against your resume, honest gaps with mitigation talking points, and tailored answers.
 
 ### 🎙️ MODE 2: Mock Interview
 - **Difficulty Scaling**: Choose from *Warm-up* (easy), *Standard* (medium), or *Pressure* (hard) levels.
-- **Realistic 5-Question Simulation**: A multi-turn conversation where the AI acts as an interviewer from the target company.
+- **Realistic 5-Question Simulation**: A multi-turn conversation where the AI acts as an interviewer from the target company — grounded in the job posting when you add one.
+- **Voice answers**: Speak instead of typing — live in-browser dictation (Chrome/Edge/Safari) or Whisper transcription via Groq (other browsers), plus an optional spoken interviewer.
 - **Adaptive Feedback**: Receive inline encouraging and corrective feedback after every answer.
 - **Comprehensive Scorecard**: Get a final grade (1-10), a per-question breakdown, a summary of strengths/improvements, and a "Pro Tip" for your next real interview.
 
@@ -119,6 +121,8 @@ GEMINI_API_KEY=your-gemini-api-key-here
 ```
 
 The key is **server-side only**: it is read by the serverless proxy (`api/gemini.js`), never bundled into the browser. Don't add a `VITE_` prefix — Vite would inline it into the public JS and anyone could extract it.
+
+Optional keys (see `.env.example`): `GROQ_API_KEY` enables Whisper voice transcription for browsers without in-browser dictation; `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` enable cross-instance rate limiting.
 
 ### Deploy on Vercel
 

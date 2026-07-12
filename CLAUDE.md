@@ -26,7 +26,7 @@ GEMINI_API_KEY=your-gemini-api-key-here
 
 The key is **server-side only** — read via `process.env.GEMINI_API_KEY` in [api/gemini.js](api/gemini.js). It must never get a `VITE_` prefix (Vite would inline it into the browser bundle; that leak is exactly what the proxy exists to prevent).
 
-Optional: `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` enable cross-instance rate limiting on the proxy (see [api/_lib/ratelimit.js](api/_lib/ratelimit.js)); without them a per-instance in-memory limiter is used. `GROQ_API_KEY` in `.env.example` is a placeholder for the planned voice mode — no code reads it yet.
+Optional: `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` enable cross-instance rate limiting on the API functions (see [api/_lib/ratelimit.js](api/_lib/ratelimit.js)); without them a per-instance in-memory limiter is used. `GROQ_API_KEY` enables Whisper voice transcription via [api/transcribe.js](api/transcribe.js) — only needed for browsers without the Web Speech API (Firefox); without it that endpoint returns a friendly 501.
 
 Deployment targets **Vercel** (`vercel.json`, which also sets security headers incl. CSP); set `GEMINI_API_KEY` in the Vercel project environment (delete the old `VITE_GEMINI_API_KEY` if present). Custom domains are configured in the Vercel dashboard (DNS at your registrar). CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs lint + build on pushes and PRs.
 
@@ -38,8 +38,13 @@ This is a **single-file React application**. All logic, UI, and inline styles li
 
 `App.jsx` exports a single `PrepAIPro` component that manages two distinct flows via `activeMode` state:
 
-- **`research` mode** — User enters company + role (+ optional resume text or `.txt/.md` upload). A single Gemini JSON request returns the dossier: history, products/market, culture, recent news, interview playbook, plus STAR stories when resume text is present. Search grounding is enabled for recency.
-- **`mock` mode** — A multi-turn conversation loop. `handleMockStart()` seeds the conversation with a system prompt embedding company/role/difficulty context. Each `handleMockSend()` appends the user answer, sends the full history to Gemini, and receives an interviewer reply. After 5 questions, `handleMockComplete()` fires a separate scoring prompt (temperature 0.5) that returns a JSON scorecard.
+- **`research` mode** — User enters company + role (+ optional resume via paste or `.txt/.md/.pdf` upload, + optional pasted job posting). A single Gemini JSON request returns the dossier: history, products/market, culture, recent news, interview playbook, plus STAR stories when a resume is present and a Fit & gaps tab when a job posting is present. Search grounding is enabled for recency. PDF text extraction uses `pdfjs-dist`, lazy-loaded only when a PDF is chosen (keeps it out of the main bundle).
+- **`mock` mode** — A multi-turn conversation loop. `startMockInterview()` seeds the conversation with a prompt embedding company/role/difficulty (+ resume/JD) context. Each `sendMockAnswer()` appends the user answer, sends the full history to Gemini, and receives an interviewer reply. After 5 questions, `generateScorecard()` fires a separate scoring prompt (temperature 0.5, `responseSchema`-enforced JSON) — it is also wired to a retry button so a failed scoring run isn't a dead end.
+
+### Voice mode (mock interview)
+
+- **Answers by voice** — `startVoiceAnswer()` picks by capability: browsers with the Web Speech API (Chrome/Edge/Safari) dictate live into the input with no server round-trip; otherwise (Firefox) audio is recorded via `MediaRecorder` and sent as base64 JSON to [api/transcribe.js](api/transcribe.js) (Whisper `whisper-large-v3-turbo` on Groq). Recordings auto-stop at 3 minutes; the endpoint caps decoded audio at 3 MB (Vercel body limit is ~4.5 MB).
+- **Interviewer voice** — browser `speechSynthesis` reads new interviewer messages aloud when the user toggles it on; it is cancelled whenever the mic starts so the recording doesn't capture the interviewer.
 
 ### Gemini API integration
 
