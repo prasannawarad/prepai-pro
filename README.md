@@ -28,7 +28,7 @@ PrepAI Pro transforms the interview preparation process into a structured, AI-dr
 ### 🎙️ MODE 2: Mock Interview
 - **Difficulty Scaling**: Choose from *Warm-up* (easy), *Standard* (medium), or *Pressure* (hard) levels.
 - **Realistic 5-Question Simulation**: A multi-turn conversation where the AI acts as an interviewer from the target company — grounded in the job posting when you add one.
-- **Voice answers**: Speak instead of typing — live in-browser dictation (Chrome/Edge/Safari) or Whisper transcription via Groq (other browsers), plus an optional spoken interviewer.
+- **Voice answers**: Speak instead of typing — Whisper transcription via Groq (accent-robust), falling back to in-browser dictation, plus an optional spoken interviewer.
 - **Adaptive Feedback**: Receive inline encouraging and corrective feedback after every answer.
 - **Comprehensive Scorecard**: Get a final grade (1-10), a per-question breakdown, a summary of strengths/improvements, and a "Pro Tip" for your next real interview.
 

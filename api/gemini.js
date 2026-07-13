@@ -4,6 +4,7 @@
 // repurposed as a general-purpose Gemini relay.
 
 import { rateLimit } from "./_lib/ratelimit.js";
+import { originAllowed } from "./_lib/origin.js";
 
 const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
@@ -16,6 +17,9 @@ const RATE_LIMIT = { name: "gemini", limit: 10, windowSeconds: 60 };
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed." });
+  }
+  if (!originAllowed(req)) {
+    return res.status(403).json({ error: "Cross-origin requests are not allowed." });
   }
 
   const { allowed } = await rateLimit(req, RATE_LIMIT);
@@ -86,8 +90,11 @@ export default async function handler(req, res) {
 
   if (!upstream.ok || data.error) {
     const status = data.error?.code || upstream.status;
-    if (status === 429) {
+    if (status === 429 || data.error?.status === "RESOURCE_EXHAUSTED") {
       return res.status(429).json({ error: "Rate limit reached — wait a minute and try again." });
+    }
+    if (status === 503 || data.error?.status === "UNAVAILABLE") {
+      return res.status(503).json({ error: "Gemini is briefly overloaded — wait a few seconds and try again." });
     }
     if (status === 401 || status === 403) {
       return res.status(502).json({ error: "The server's Gemini key was rejected." });

@@ -43,8 +43,13 @@ This is a **single-file React application**. All logic, UI, and inline styles li
 
 ### Voice mode (mock interview)
 
-- **Answers by voice** — `startVoiceAnswer()` picks by capability: browsers with the Web Speech API (Chrome/Edge/Safari) dictate live into the input with no server round-trip; otherwise (Firefox) audio is recorded via `MediaRecorder` and sent as base64 JSON to [api/transcribe.js](api/transcribe.js) (Whisper `whisper-large-v3-turbo` on Groq). Recordings auto-stop at 3 minutes; the endpoint caps decoded audio at 3 MB (Vercel body limit is ~4.5 MB).
+- **Answers by voice** — `startVoiceAnswer()` is **Whisper-first**: audio is recorded via `MediaRecorder` (echo cancellation + noise suppression on) and sent as base64 JSON to [api/transcribe.js](api/transcribe.js) (Whisper `whisper-large-v3-turbo` on Groq — much better with accents than browser dictation). If the server returns 501 (no `GROQ_API_KEY`), the client remembers and falls back to Web Speech API live dictation (`navigator.language` English variants). Recordings auto-stop at 3 minutes; the endpoint caps decoded audio at 3 MB (Vercel body limit is ~4.5 MB).
 - **Interviewer voice** — browser `speechSynthesis` reads new interviewer messages aloud when the user toggles it on; it is cancelled whenever the mic starts so the recording doesn't capture the interviewer.
+
+### Guardrails
+
+- Both API functions reject cross-origin browser requests ([api/_lib/origin.js](api/_lib/origin.js)) and rate-limit per IP; Gemini 429/503 map to friendly retry messages.
+- Resume, job posting, and candidate answers are wrapped as untrusted data in every prompt (never follow embedded instructions). The mock interviewer has a persona block (`interviewerPersona()` in App.jsx) with conduct rules: stay in character, steer back off-topic input, ask for a repeat on garbled/unclear answers instead of pretending they made sense, cap reply length. The scorecard prompt scores only what the transcript supports and ignores embedded score requests.
 
 ### Gemini API integration
 

@@ -5,6 +5,7 @@
 // below that.
 
 import { rateLimit } from "./_lib/ratelimit.js";
+import { originAllowed } from "./_lib/origin.js";
 
 const GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 const MODEL = "whisper-large-v3-turbo";
@@ -23,6 +24,9 @@ const MIME_EXT = {
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed." });
+  }
+  if (!originAllowed(req)) {
+    return res.status(403).json({ error: "Cross-origin requests are not allowed." });
   }
 
   const { allowed } = await rateLimit(req, RATE_LIMIT);
